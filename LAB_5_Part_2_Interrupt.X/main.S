@@ -1,7 +1,7 @@
     ; Luke Groesbeck
     ; RCET3373
     ; ISRs
-    ; https://github.com/groeluke/Lab_5_Interrupt_Service_Routines/tree/main/LAB_5_Part_1_Interrupt.X
+    ; https://github.com/groeluke/Lab_5_Interrupt_Service_Routines/tree/main/LAB_5_Part_2_Interrupt.X
     
 ; PIC16F883 Configuration Bit Settings
 
@@ -36,7 +36,7 @@ ResetVector:
 ; Interrupt Vector at 0004h. Execution starts here after an interrupt.
 PSECT isrVect,class=CODE,delta=2
 InterruptVector:
-    GOTO IsrHandler
+    GOTO ISRHandler
    
 ; Main code section starts at 0008h. User code goes here.
 PSECT code,class=CODE,delta=2
@@ -53,47 +53,61 @@ Setup:
     CLRF    TRISC        ;PORTC all outputs (LEDs)
     BANKSEL OPTION_REG
     BCF     OPTION_REG,6 ;will be on a falling edge
+    BSF     IOCB,4       ;enable interrupt on change for RB4
     
     ;          Bank 3
     BANKSEL ANSEL
-    CLRF    ANSEL
-    CLRF    ANSELH
+    CLRF    ANSEL        ;set PortA as digital I/O
+    CLRF    ANSELH       ;set PortB as digital I/O
 
     ;          Bank 0
     BANKSEL PORTA
     CLRF    PORTA        ;monitor pin starts low
     CLRF    PORTC        ;count starts at 0  
-    BCF INTCON,1        ;clear external interrupt flag
-    BSF INTCON,4        ;enable external interrupt bit
-    BSF INTCON,7        ;global enable
+    BCF INTCON,0         ;clear change on PortB interrupt flag
+    BCF INTCON,1         ;clear external interrupt flag
+    BSF INTCON,3         ;enable PortB change interrupt
+    BSF INTCON,4         ;enable external interrupt bit
+    BSF INTCON,7         ;global enable
 
 
 Main:
-    MOVLW 0x01          ;Loads RA0 to toggle
-    XORWF PORTA,1       ;toggle RA0 
+    MOVLW 0x01           ;Loads RA0 to toggle
+    XORWF PORTA,1        ;toggle RA0 
     GOTO Main
 
-IsrHandler:
+ISRHandler:
     ;         save
-    MOVWF W_TEMP          ;save W (no flags affected)
-    SWAPF STATUS,W        ;STATUS into W with nibbles swapped, no flags change
-    MOVWF STATUS_TEMP     ;save swapped STATUS
+    MOVWF   W_TEMP              ;save W (no flags affected)
+    SWAPF   STATUS, W           ;STATUS into W with nibbles swapped, no flags change
+    MOVWF   STATUS_TEMP         ;save swapped STATUS
 
     ;         check RB0
-    BTFSS INTCON,1        ;check if it was RB0
-    GOTO ISR_Exit         ;no, nothing to service
+    BTFSS   INTCON, 1           ;check if it was RB0 (INTF set?)
+    GOTO    CheckIOC            ;no ? check the other source
 
-    BANKSEL PORTC         ;changes RP bits, but STATUS is restored below
-    INCF PORTC,1          ;count one press
-    BCF INTCON,1          ;clear external interrupt flag before returning
+    ;         service RB0
+    CLRF    PORTC               ;clear count
+    BCF     INTCON, 1           ;clear external interrupt flag
+    GOTO    ISRExit
 
-ISR_Exit:
-    ;         restore 
-    SWAPF STATUS_TEMP,W   ;un-swap STATUS into W
-    MOVWF STATUS          ;restores flags AND bank bits (RP0/RP1)
-    SWAPF W_TEMP,F        ;swap W_TEMP nibbles in place
-    SWAPF W_TEMP,W        ;swap back into W, STATUS untouched
+CheckIOC:
+    ;         check RB4
+    BTFSS   INTCON, 0           ;check if it was RB4 (RBIF set?)
+    GOTO    ISRExit             ;neither flag ? just exit
+
+    ;         service RB4 IOC
+    MOVF    PORTB, W            ;read PORTB to end the mismatch condition
+    INCF    PORTC, F            ;count one press
+    BCF     INTCON, 0           ;clear PortB interrupt flag
+
+ISRExit:
+    ;         restore
+    SWAPF   STATUS_TEMP, W      ;un-swap STATUS into W
+    MOVWF   STATUS              ;restores flags AND bank bits (RP0/RP1)
+    SWAPF   W_TEMP, F           ;swap W_TEMP nibbles in place
+    SWAPF   W_TEMP, W           ;swap back into W, STATUS untouched
     RETFIE
-
+    
     End
     

@@ -53,6 +53,7 @@ Setup:
     CLRF    TRISC        ;PORTC all outputs (LEDs)
     BANKSEL OPTION_REG
     BCF     OPTION_REG,6 ;will be on a falling edge
+    BSF     IOCB,4       ;enable interrupt on change for 
     
     ;          Bank 3
     BANKSEL ANSEL
@@ -63,6 +64,7 @@ Setup:
     BANKSEL PORTA
     CLRF    PORTA        ;monitor pin starts low
     CLRF    PORTC        ;count starts at 0  
+    
     BCF INTCON,1        ;clear external interrupt flag
     BSF INTCON,4        ;enable external interrupt bit
     BSF INTCON,7        ;global enable
