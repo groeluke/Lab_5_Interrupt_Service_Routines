@@ -42,11 +42,6 @@ InterruptVector:
 PSECT code,class=CODE,delta=2
  
 Setup: 
-    ;          Bank 0
-    BANKSEL PORTA
-    CLRF    PORTA        ;monitor pin starts low
-    CLRF    PORTC        ;count starts at 0
-
     ;          Bank 1
     BANKSEL TRISA
     BCF     TRISA,0      ;Set RA0 as output for monitoring
@@ -81,26 +76,21 @@ ISRHandler:
     MOVWF   W_TEMP              ;save W (no flags affected)
     SWAPF   STATUS, W           ;STATUS into W with nibbles swapped, no flags change
     MOVWF   STATUS_TEMP         ;save swapped STATUS
-
     ;         check RB0
     BTFSS   INTCON, 1           ;check if it was RB0 (INTF set?)
     GOTO    CheckIOC            ;no ? check the other source
-
-    ;         service RB0
+    ;         RB0
     CLRF    PORTC               ;clear count
     BCF     INTCON, 1           ;clear external interrupt flag
     GOTO    ISRExit
-
 CheckIOC:
     ;         check RB4
     BTFSS   INTCON, 0           ;check if it was RB4 (RBIF set?)
     GOTO    ISRExit             ;neither flag ? just exit
-
-    ;         service RB4 IOC
+    ;         RB4 IOC
     MOVF    PORTB, W            ;read PORTB to end the mismatch condition
     INCF    PORTC, F            ;count one press
     BCF     INTCON, 0           ;clear PortB interrupt flag
-
 ISRExit:
     ;         restore
     SWAPF   STATUS_TEMP, W      ;un-swap STATUS into W
