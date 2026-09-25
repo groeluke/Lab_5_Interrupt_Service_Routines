@@ -79,7 +79,7 @@ ISRHandler:
     ;         
     BANKSEL PORTB            ;bank 0 covers PORTB, PORTA, PB_OLD/NEW/CHANGED, INTCON
 
-    BTFSS   INTCON,0         ;RBIF set?
+    BTFSS   INTCON,0         ;check to see if RBIF was real
     GOTO    ISRExit          ;no, nothing to do
 
     ;         read current PORTB and find what changed

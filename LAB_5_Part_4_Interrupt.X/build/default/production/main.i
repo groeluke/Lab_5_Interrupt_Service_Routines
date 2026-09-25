@@ -2340,11 +2340,19 @@ auto_size SET 0
 ENDM
 # 8 "C:\\Program Files\\Microchip\\xc8\\v3.10\\pic\\include/xc.inc" 2 3
 # 28 "main.S" 2
- W_TEMP EQU 0x70 ;use data memory address 0x70 will hold W during the ISR
-   STATUS_TEMP EQU 0x71 ;use data memory address 0x71 holds swapped STATUS during the ISR
-   RB_OLD EQU 0x72 ;last know PORTB value
-   RB_NEW EQU 0x73 ;PORTB value read this ISR entry
-   RB_CHANGED EQU 0x74 ;XOR result = bits that changed
+ W_TEMP_A EQU 0x70 ;
+   STATUS_TEMP_A EQU 0x71 ;
+   W_TEMP_B EQU 0x72 ;
+   STATUS_TEMP_B EQU 0x73 ;
+   FLAGS EQU 0x74 ;
+   OLD_DISPLAY EQU 0x75 ;
+
+   maincount6 EQU 0x20 ;set the main delay for display 6
+   outcount6 EQU 0x21 ;set the outter delay for display 6
+   incount6 EQU 0x22 ;set the inner delay for display 6
+   maincount7 EQU 0x23 ;set the main delay for diplay 7
+   outcount7 EQU 0x24 ;set the outter delay for display 7
+   incount7 EQU 0x25 ;set the inner delay for display 7
 
 ; Reset Vector at 0000h. Execution starts here after reset.
 PSECT resetVect,class=CODE,delta=2
@@ -2362,106 +2370,141 @@ PSECT code,class=CODE,delta=2
 Setup:
     ; Bank 1
     BANKSEL TRISA
-    CLRF TRISA ;Set RA's as output for monitoring binary count
-    CLRF TRISC ;PORTC left as before but not used
-    MOVLW 0xFF
-    MOVWF TRISB ;set all of PORTB inputs
-    MOVLW 0xFF
-    MOVWF IOCB ;enable IOC on ((PORTB) and 07Fh), 0 -((PORTB) and 07Fh), 7
+    CLRF TRISC ;PORTC set as outputs for display
+    BSF TRISB,0 ;set ((PORTB) and 07Fh), 0 of PORTB to input
+    BSF TRISB,1 ;set ((PORTB) and 07Fh), 1 of PORTB to input
+    BSF IOCB,1 ;enable IOC on ((PORTB) and 07Fh), 1
+    BCF OPTION_REG,6 ;RBO/INT falling edge
 
     ; Bank 3
     BANKSEL ANSEL
-    CLRF ANSEL ;set PortA as digital I/O
+    CLRF ANSEL ;set PortC as digital I/O
     CLRF ANSELH ;set PortB as digital I/O
 
     ; Bank 0
-    BANKSEL PORTA
-    CLRF PORTA ;monitor pin starts low
+    BANKSEL PORTB
     MOVF PORTB,W ;initial comparison state
-    MOVWF RB_OLD ;before enabling the interrupt
+    CLRF FLAGS ;start with nothing in the flags register
     BCF INTCON,0 ;clear change on PortB interrupt flag
+    BCF INTCON,1 ;clear external interupt flag
     BSF INTCON,3 ;enable PortB change interrupt
-    BSF INTCON,7 ;global enable
+    BSF INTCON,4 ;enable external interrupt bit
+    BSF INTCON,7 ;enable global interrupt bit
 
 Main:
+    MOVLW 0x31 ;Select the character set for display 1
+    MOVWF PORTC ;Send W to PortC
     GOTO Main
 
 ISRHandler:
-    ; save
-    MOVWF W_TEMP ;save W (no flags affected)
+    BTFSC FLAGS,0
+    GOTO SaveOuterB
+
+    SaveOuterA:
+    MOVWF W_TEMP_A ;save W (no flags affected)
     SWAPF STATUS,W ;STATUS into W with nibbles swapped, no flags change
-    MOVWF STATUS_TEMP ;save swapped STATUS
-    ;
-    BANKSEL PORTB ;bank 0 covers PORTB, PORTA, PB_OLD/NEW/CHANGED, INTCON
+    MOVWF STATUS_TEMP_A ;save swapped STATUS
+    GOTO CheckSource
 
-    BTFSS INTCON,0 ;check to see if ((INTCON) and 07Fh), 0 was real
-    GOTO ISRExit ;no, nothing to do
+    SaveOuterB:
+    MOVWF W_TEMP_B ;save W (no flags affected)
+    SWAPF STATUS,W ;STATUS into W with nibbles swapped, no flags change
+    MOVWF STATUS_TEMP_B ;save swapped STATUS
 
-    ; read current PORTB and find what changed
-    MOVF PORTB,W ;W will be the current PORTB
-    MOVWF RB_NEW ;save it, you'll need it twice
-    XORWF RB_OLD,W ;W PB_NEW XOR PB_OLD changed bits
-    MOVWF RB_CHANGED
+CheckSource:
+    ; ((PORTB) and 07Fh), 1 IOC = display 7
+    BTFSS INTCON,0 ;check the interrupt on change bit flag
+    GOTO CheckINT ;if not set, check the other source
 
-    ; update the comparison state for next time
-    MOVF RB_NEW,W
-    MOVWF RB_OLD
+    ; display 7
+    MOVF PORTB,W ;dummy read - this is what actually clears the mismatch
+    BCF INTCON,0 ;clear the IOC flag right now
+    MOVF PORTC,W ;grab whatever's currently displayed
+    MOVWF OLD_DISPLAY ;this will be 1 or 6 depending on what 7 interrupted
+    MOVLW 0x37
+    MOVWF PORTC ;put 7 on the display
+    BCF INTCON,7 ;keep interrupts off during the delay
+    CALL LongDelay7 ;2 seconds, uninterruptible
+    MOVF OLD_DISPLAY,W ;restore whatever was showing before 7 started
+    MOVWF PORTC
+    GOTO ISRExit
 
-    ; determine which bit changed -- lowest pin wins
-    BTFSC RB_CHANGED,0 ;if ((PORTB) and 07Fh), 0 is low skip GOTO next test
-    GOTO Pin0 ;if ((PORTB) and 07Fh), 0 is high move the binary value to portA
-    BTFSC RB_CHANGED,1 ;if ((PORTB) and 07Fh), 1 is low skip GOTO next test
-    GOTO Pin1 ;if ((PORTB) and 07Fh), 1 is high move the binary value to portA
-    BTFSC RB_CHANGED,2 ;if ((PORTB) and 07Fh), 2 is low skip GOTO next test
-    GOTO Pin2 ;if ((PORTB) and 07Fh), 2 is high move the binary value to portA
-    BTFSC RB_CHANGED,3 ;if ((PORTB) and 07Fh), 3 is low skip GOTO next test
-    GOTO Pin3 ;if ((PORTB) and 07Fh), 3 is high move the binary value to portA
-    BTFSC RB_CHANGED,4 ;if ((PORTB) and 07Fh), 4 is low skip GOTO next test
-    GOTO Pin4 ;if ((PORTB) and 07Fh), 4 is high move the binary value to portA
-    BTFSC RB_CHANGED,5 ;if ((PORTB) and 07Fh), 5 is low skip GOTO next test
-    GOTO Pin5 ;if ((PORTB) and 07Fh), 5 is high move the binary value to portA
-    BTFSC RB_CHANGED,6 ;if ((PORTB) and 07Fh), 6 is low skip GOTO next test
-    GOTO Pin6 ;if ((PORTB) and 07Fh), 6 is high move the binary value to portA
-    BTFSC RB_CHANGED,7 ;if ((PORTB) and 07Fh), 7 is low skip GOTO next test
-    GOTO Pin7 ;if ((PORTB) and 07Fh), 7 is high move the binary value to portA
-    GOTO IOC_Done ;RB_CHANGED was 0 to be safe
+CheckINT:
+    ; RBO PORTB change = display 6
+    BTFSS INTCON,1 ;check the external interrupt flag bit for priority
+    GOTO ISRExit ;if yes make sure that we run the priority
 
-Pin0:
-    MOVLW 0x00 ;move 000 to PortA
-    GOTO SetPin
-Pin1:
-    MOVLW 0x01 ;move 001 to PortA
-    GOTO SetPin
-Pin2:
-    MOVLW 0x02 ;move 010 to PortA
-    GOTO SetPin
-Pin3:
-    MOVLW 0x03 ;move 011 to PortA
-    GOTO SetPin
-Pin4:
-    MOVLW 0x04 ;move 100 to PortA
-    GOTO SetPin
-Pin5:
-    MOVLW 0x05 ;move 101 to PortA
-    GOTO SetPin
-Pin6:
-    MOVLW 0x06 ;move 110 to PortA
-    GOTO SetPin
-Pin7:
-    MOVLW 0x07 ;move 111 to PortA
+; display 6
+    BCF INTCON,1 ;clear external interrupt flag
+    BTFSC FLAGS,0 ;check if flag ((PORTB) and 07Fh), 0 flag was set
+    GOTO ISRExit ;if not leave
+    MOVLW 0x36 ;move hex value for DLG7137 to display 6
+    MOVWF PORTC ;display value on the DLG7137
+    BSF FLAGS,0 ;set the flag bit for interrupt
+    BSF INTCON,7 ;set global interrupt enable
+    CALL LongDelay6 ;call the delay and run before returning 2 sec
+    BCF FLAGS,0 ;clear flag before leaving
+    GOTO ISRExit
 
-SetPin:
-    MOVWF PORTA ;display the value in binary
-
-IOC_Done:
-    BCF INTCON,0 ;clear ((INTCON) and 07Fh), 0 PORTB was already re-read
-
+    ; restore whichever slot we saved into
 ISRExit:
-    ; restore
-    SWAPF STATUS_TEMP,W ;un-swap STATUS into W
-    MOVWF STATUS ;restores flags AND bank bits (((STATUS) and 07Fh), 5/((STATUS) and 07Fh), 6)
-    SWAPF W_TEMP,F ;swap W_TEMP nibbles in place
-    SWAPF W_TEMP,W ;swap back into W, STATUS untouched
+    BTFSC FLAGS,0 ; still inside 6's window? then THIS exit is 7's
+    GOTO RestoreInner ; exit, and it must restore slot B, not slot A
+
+RestoreOuter:
+    SWAPF STATUS_TEMP_A,W ;res
+    MOVWF STATUS
+    SWAPF W_TEMP_A,F
+    SWAPF W_TEMP_A,W
+    RETFIE ; pops the return address, ((INTCON) and 07Fh), 7 turns back on
+
+RestoreInner:
+    SWAPF STATUS_TEMP_B,W
+    MOVWF STATUS
+    SWAPF W_TEMP_B,F
+    SWAPF W_TEMP_B,W
     RETFIE
+
+LongDelay6:
+    MOVLW 0x43
+    MOVWF maincount6
+MainDelayLoop6:
+    MOVLW 0x32
+    MOVWF outcount6
+OutDelayLoop6:
+    CALL ShortDelay6
+    DECFSZ outcount6,1
+    GOTO OutDelayLoop6
+    DECFSZ maincount6,1
+    GOTO MainDelayLoop6
+    RETURN
+ShortDelay6:
+    MOVLW 0xC8
+    MOVWF incount6
+InDelayLoop6:
+    DECFSZ incount6,1
+    GOTO InDelayLoop6
+    RETURN
+
+LongDelay7:
+    MOVLW 0x22
+    MOVWF maincount7
+MainDelayLoop7:
+    MOVLW 0x32
+    MOVWF outcount7
+OutDelayLoop7:
+    CALL ShortDelay7
+    DECFSZ outcount7,1
+    GOTO OutDelayLoop7
+    DECFSZ maincount7,1
+    GOTO MainDelayLoop7
+    RETURN
+ShortDelay7:
+    MOVLW 0xC8
+    MOVWF incount7
+InDelayLoop7:
+    DECFSZ incount7,1
+    GOTO InDelayLoop7
+    RETURN
 
     End
